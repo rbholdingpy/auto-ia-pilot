@@ -3,7 +3,6 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import base64
 import io
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from openai import OpenAI
 import time
 from datetime import datetime, timedelta
@@ -21,7 +20,7 @@ import uuid
 MODO_LANZAMIENTO = True 
 CREDITOS_INVITADO = 4 
 NOMBRE_APP = "AutoProp IA 🚗"
-NOMBRE_SHEET_DB = "Usuarios_AutoApp" # ¡Asegúrate de crear esta hoja en Drive!
+NOMBRE_SHEET_DB = "Usuarios_AutoApp" 
 
 # --- IMPORTACIÓN CONDICIONAL DE MOVIEPY ---
 try:
@@ -182,6 +181,8 @@ def limpiar_formulario():
     st.session_state['v_uso_alquiler'] = "Particular"
     st.session_state['v_frecuencia_pago'] = "Diario"
     
+    st.session_state['v_extra'] = "" # Resetear el campo extra
+    
     st.session_state['u_whatsapp'] = None 
     
     # Borrar resultados generados
@@ -326,20 +327,29 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =======================================================
-# === 🔐 CONEXIÓN GOOGLE SHEETS (AUTOMOTOR) ===
+# === 🔐 CONEXIÓN GOOGLE SHEETS (MODO EXPERTO MODERNO) ===
 # =======================================================
 def get_gspread_client():
-    creds_info = dict(st.secrets["gcp_service_account"])
-    if "private_key" in creds_info:
-        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
-    client_gs = gspread.authorize(creds)
-    return client_gs
+    """Conexión robusta a Google Sheets usando método nativo de gspread"""
+    try:
+        # Convertir el objeto secrets de Streamlit a un diccionario normal
+        creds_info = dict(st.secrets["gcp_service_account"])
+        
+        # Corrección de formato de clave privada (común en Streamlit)
+        if "private_key" in creds_info:
+            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+        
+        # MÉTODO MODERNO: No usa oauth2client, usa la auth interna de gspread nueva
+        return gspread.service_account_from_dict(creds_info)
+    except Exception as e:
+        print(f"Error de credenciales: {e}")
+        return None
 
 def obtener_usuarios_sheet():
     try:
         client_gs = get_gspread_client()
+        if not client_gs: return []
+        
         archivo = client_gs.open(NOMBRE_SHEET_DB)
         sheet = archivo.get_worksheet(0)
         return sheet.get_all_records()
@@ -349,16 +359,25 @@ def obtener_usuarios_sheet():
 def descontar_credito(codigo_usuario):
     try:
         client_gs = get_gspread_client()
+        if not client_gs: return False
+        
         sheet = client_gs.open(NOMBRE_SHEET_DB).get_worksheet(0)
         cell = sheet.find(str(codigo_usuario))
         if cell:
             headers = sheet.row_values(1)
-            col_limite = headers.index('limite') + 1 
-            valor_actual = sheet.cell(cell.row, col_limite).value
-            if valor_actual and int(valor_actual) > 0:
-                nuevo_saldo = int(valor_actual) - 1
-                sheet.update_cell(cell.row, col_limite, nuevo_saldo)
-                return True
+            # Manejo seguro de columnas (busca 'limite' sin importar mayúsculas)
+            col_limite = -1
+            for i, h in enumerate(headers):
+                if str(h).lower().strip() == 'limite':
+                    col_limite = i + 1
+                    break
+            
+            if col_limite != -1:
+                valor_actual = sheet.cell(cell.row, col_limite).value
+                if valor_actual and int(valor_actual) > 0:
+                    nuevo_saldo = int(valor_actual) - 1
+                    sheet.update_cell(cell.row, col_limite, nuevo_saldo)
+                    return True
     except Exception:
         return False
     return False
@@ -366,18 +385,30 @@ def descontar_credito(codigo_usuario):
 def registrar_pedido(nombre, apellido, email, telefono, nuevo_plan):
     try:
         client_gs = get_gspread_client()
-        # Intentamos abrir la hoja
+        if not client_gs: return "ERROR"
+        
         archivo = client_gs.open(NOMBRE_SHEET_DB)
         sheet = archivo.get_worksheet(0)
         
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
         nombre_completo = f"{nombre} {apellido}"
+        
+        # Verificar si el correo ya existe
+        try:
+            lista_correos_raw = sheet.col_values(6) # Asumiendo columna 6 es email
+            lista_correos_clean = [str(e).strip().lower() for e in lista_correos_raw]
+            email_input_clean = str(email).strip().lower()
+            
+            if email_input_clean in lista_correos_clean:
+                return "UPDATED" # Ya existe
+        except:
+            pass # Si falla la lectura, procedemos a crear
+            
         nueva_fila = ["PENDIENTE", nombre_completo, nuevo_plan, 0, telefono, email, "NUEVO PEDIDO", fecha]
         sheet.append_row(nueva_fila)
         return "CREATED"
     except Exception as e:
-        # ESTA LINEA ES LA CLAVE: Te mostrará el error técnico en la pantalla roja
-        st.error(f"ERROR TÉCNICO: {e}") 
+        st.error(f"Error detallado DB: {e}")
         return "ERROR"
 
 # =======================================================
@@ -668,6 +699,11 @@ with st.form("formulario_vehiculo"):
         else:
              st.text_input("WhatsApp", placeholder="🔒 Solo Miembros PRO", disabled=True)
 
+    # --- NUEVO CAMPO DE DETALLES EXTRA ---
+    st.markdown("---")
+    extra_details = st.text_input("📝 Detalles Extra (Opcional - Máx 100 caracteres)", max_chars=100, placeholder="Aquí puede agregar algunos detalles muy importantes (Ej: Único dueño, Service al día...)", key="v_extra")
+    # -------------------------------------
+
     deshabilitar_boton = False
     if (es_pro or MODO_LANZAMIENTO) and not uploaded_files:
         deshabilitar_boton = True
@@ -722,6 +758,12 @@ if submitted:
             if estado == "0KM": tono_venta = "centrado en la exclusividad y garantía."
             if oper == "Alquiler" and "Plataforma" in uso_alquiler: tono_venta = "centrado en la economía y rentabilidad para trabajar."
 
+            # --- INCORPORAR DETALLES EXTRA ---
+            info_adicional_usuario = ""
+            if extra_details:
+                info_adicional_usuario = f"- NOTA IMPORTANTE DEL VENDEDOR: {extra_details} (Asegúrate de mencionar esto)."
+            # ---------------------------------
+
             base_prompt = f"""Eres un Vendedor de Autos Experto y Copywriter Automotriz.
             DATOS TÉCNICOS:
             - Operación: {oper}{detalles_alquiler_prompt}
@@ -730,6 +772,7 @@ if submitted:
             - Estado: {estado}. Origen: {origen}.
             - Mecánica: Transmisión {transmision}, Motor {combustible}.
             - Precio: {texto_precio_final}.
+            {info_adicional_usuario}
             """
             
             prompt_avanzado = f"""
