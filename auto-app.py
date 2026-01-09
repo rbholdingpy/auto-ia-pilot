@@ -366,13 +366,18 @@ def descontar_credito(codigo_usuario):
 def registrar_pedido(nombre, apellido, email, telefono, nuevo_plan):
     try:
         client_gs = get_gspread_client()
-        sheet = client_gs.open(NOMBRE_SHEET_DB).get_worksheet(0)
+        # Intentamos abrir la hoja
+        archivo = client_gs.open(NOMBRE_SHEET_DB)
+        sheet = archivo.get_worksheet(0)
+        
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
         nombre_completo = f"{nombre} {apellido}"
         nueva_fila = ["PENDIENTE", nombre_completo, nuevo_plan, 0, telefono, email, "NUEVO PEDIDO", fecha]
         sheet.append_row(nueva_fila)
         return "CREATED"
     except Exception as e:
+        # ESTA LINEA ES LA CLAVE: Te mostrará el error técnico en la pantalla roja
+        st.error(f"ERROR TÉCNICO: {e}") 
         return "ERROR"
 
 # =======================================================
