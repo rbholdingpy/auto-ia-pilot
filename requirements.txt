@@ -1,6 +1,6 @@
 streamlit
 Pillow
-gspread
+gspread==5.12.4
 oauth2client
 openai
 moviepy==1.0.3
