@@ -34,7 +34,7 @@ st.set_page_config(
     page_title=NOMBRE_APP, 
     page_icon="🚗",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded" 
 )
 
 # --- TU NÚMERO DE ADMINISTRADOR ---
@@ -332,14 +332,9 @@ client = OpenAI(api_key=api_key)
 def get_gspread_client():
     """Conexión robusta a Google Sheets usando método nativo de gspread"""
     try:
-        # Convertir el objeto secrets de Streamlit a un diccionario normal
         creds_info = dict(st.secrets["gcp_service_account"])
-        
-        # Corrección de formato de clave privada (común en Streamlit)
         if "private_key" in creds_info:
             creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-        
-        # MÉTODO MODERNO: No usa oauth2client, usa la auth interna de gspread nueva
         return gspread.service_account_from_dict(creds_info)
     except Exception as e:
         print(f"Error de credenciales: {e}")
@@ -365,7 +360,6 @@ def descontar_credito(codigo_usuario):
         cell = sheet.find(str(codigo_usuario))
         if cell:
             headers = sheet.row_values(1)
-            # Manejo seguro de columnas (busca 'limite' sin importar mayúsculas)
             col_limite = -1
             for i, h in enumerate(headers):
                 if str(h).lower().strip() == 'limite':
@@ -393,16 +387,15 @@ def registrar_pedido(nombre, apellido, email, telefono, nuevo_plan):
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
         nombre_completo = f"{nombre} {apellido}"
         
-        # Verificar si el correo ya existe
         try:
-            lista_correos_raw = sheet.col_values(6) # Asumiendo columna 6 es email
+            lista_correos_raw = sheet.col_values(6) 
             lista_correos_clean = [str(e).strip().lower() for e in lista_correos_raw]
             email_input_clean = str(email).strip().lower()
             
             if email_input_clean in lista_correos_clean:
-                return "UPDATED" # Ya existe
+                return "UPDATED" 
         except:
-            pass # Si falla la lectura, procedemos a crear
+            pass 
             
         nueva_fila = ["PENDIENTE", nombre_completo, nuevo_plan, 0, telefono, email, "NUEVO PEDIDO", fecha]
         sheet.append_row(nueva_fila)
@@ -412,12 +405,17 @@ def registrar_pedido(nombre, apellido, email, telefono, nuevo_plan):
         return "ERROR"
 
 # =======================================================
-# === 🏗️ BARRA LATERAL (AUTOMOTOR) ===
+# === 🏗️ BARRA LATERAL (AUTOMOTOR - ACTUALIZADA) ===
 # =======================================================
 with st.sidebar:
+    # 1. BOTÓN DE INICIO SIEMPRE VISIBLE
+    if st.button("🏠 Ir al Inicio", use_container_width=True):
+        volver_a_app()
+
     st.header("🔐 Área de Agentes")
     
     if not st.session_state['usuario_activo']:
+        # MODO INVITADO
         if MODO_LANZAMIENTO:
             creditos_actuales = st.session_state.get('guest_credits', CREDITOS_INVITADO)
             st.markdown(f"""<div style="background-color:#FEF3C7; padding:10px; border-radius:8px; margin-bottom:15px; border:1px solid #F59E0B;"><small>Estado actual:</small><br><b>🚀 INVITADO VIP (Motor)</b><br><span style="color:#B45309; font-size:0.9em;">Créditos disponibles: <b>{creditos_actuales}</b></span></div>""", unsafe_allow_html=True)
@@ -440,11 +438,15 @@ with st.sidebar:
         st.info("💡 **Los Invitados tienen funciones limitadas.**")
         st.button("🚀 VER PLANES PRO", on_click=ir_a_planes)
     else:
+        # MODO LOGUEADO
         user = st.session_state['usuario_activo']
         creditos_disponibles = int(user.get('limite', 0) if user.get('limite') != "" else 0)
         st.success(f"✅ ¡Hola {user.get('cliente', 'Agente')}!")
         color_cred = "blue" if creditos_disponibles > 0 else "red"
         st.markdown(f":{color_cred}[**🪙 Créditos: {creditos_disponibles}**]")
+        
+        # 2. NUEVO BOTÓN SUBIR DE NIVEL
+        st.button("💎 Subir de Nivel / Recargar", on_click=ir_a_planes, use_container_width=True)
         
     st.markdown("---")
     st.markdown("### 🛠️ Gestión")
@@ -861,7 +863,7 @@ if 'generated_result' in st.session_state:
     msg_url = urllib.parse.quote(st.session_state['generated_result'])
     
     svg_wa = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 60.2 23.5 118.5 61.9 163.9L0 512l95.4-25.2c43.4 23.6 92.6 36.1 143.3 36.1 122.4 0 222-99.6 222-222 0-59.3-23.5-115.1-65.4-157zM223.9 471.1c-44.9 0-88.7-11.8-127.7-34.2L90.2 434l-47.6 12.6 12.7-46.4-6-10.5C25.1 346.6 12 296.4 12 244.1c0-116.9 95.1-212 211.9-212 56.6 0 109.8 22 149.9 62.1 40 40.1 62.1 93.3 62.1 149.9 0 116.9-95.1 212-212 212zm112.2-157.8c-6.1-3-36.4-18-42-20.1-5.6-2.1-9.7-3-13.7 3-4 6.1-15.6 19.5-19.1 23.5-3.5 4-7 4.5-13.1 1.5-6.1-3-25.7-9.5-48.9-30.2-18.1-16.1-30.3-36-33.8-42-3.5-6.1-.3-9.4 2.7-12.4 2.8-2.8 6.1-7.3 9.1-11 3-3.6 4-6.1 6.1-10.3 2.1-4.2 1-7.9-.5-11-1.5-3-13.7-33.1-18.8-45.3-5-12.1-10.1-10.4-13.7-10.6-3.5-.2-7.5-.2-11.5-.2-4 0-10.5 1.5-15.9 7.3-5.4 5.8-20.8 20.3-20.8 49.5 0 29.2 21 57.5 23.9 61.5 3 4 41.3 63.1 100.1 88.5 14 6 24.9 9.6 33.4 12.3 14.1 4.5 26.9 3.8 37.1 2.3 11.3-1.7 36.4-14.9 41.5-29.3 5.1-14.4 5.1-26.8 3.6-29.3-1.5-2.6-5.6-4-11.6-7z"/></svg>'
-    svg_ig = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.9 0-184.9zm-49.6 259.7c-12.2 12.2-28.4 18.4-59.5 20-32.3 1.6-128.9 1.6-161.2 0-31-1.6-47.3-7.8-59.5-20-12.2-12.2-18.4-28.4-20-59.5-1.6-32.3-1.6-128.9 0-161.2 1.6-31 7.8-47.3 20-59.5 12.2-12.2 28.4-18.4 59.5-20 32.3-1.6 128.9-1.6 161.2 0 31 1.6 47.3 7.8 59.5z"/></svg>'
+    svg_ig = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.9 0-184.9zm-49.6 259.7c-12.2 12.2-28.4 18.4-59.5 20-32.3 1.6-128.9 1.6-161.2 0-31-1.6-47.3-7.8-59.5-20-12.2-12.2-18.4-28.4-20-59.5-1.6-32.3-1.6-128.9 0-161.2 1.6-31 7.8-47.3 20-59.5 12.2-12.2 28.4-18.4 59.5-20 32.3-1.6 128.9-1.6 161.2 0 31 1.6 47.3 7.8 59.5 20 12.2 12.2 18.4 28.4 20 59.5 1.6 32.3 1.6 128.9 0 161.2-1.6 31-7.8 47.3-20 59.5z"/></svg>'
     svg_fb = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><path d="M80 299.3V512H196V299.3h86.5l18-97.8H196V166.9c0-28.3 7.9-47.5 48.4-47.5h51.7V35.7c-9-1.2-39.6-3.9-75.3-3.9-74.5 0-125.5 45.5-125.5 128.9v72.8H80z"/></svg>'
     svg_tk = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M448,209.91a210.06,210.06,0,0,1-122.77-39.25V349.38A162.55,162.55,0,1,1,185,188.31V278.2a90.92,90.92,0,1,0,90.93,90.93V0H210.16V209.91A210.26,210.26,0,1,0,448,209.91Z"/></svg>'
 
