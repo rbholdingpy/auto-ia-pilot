@@ -6,11 +6,13 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from openai import OpenAI
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib.parse
 import os
 import tempfile
+import numpy as np
 import shutil 
+import re 
 import uuid 
 
 # ==========================================
@@ -19,7 +21,7 @@ import uuid
 MODO_LANZAMIENTO = True 
 CREDITOS_INVITADO = 4 
 NOMBRE_APP = "AutoProp IA 🚗"
-NOMBRE_SHEET_DB = "Usuarios_AutoApp" # ¡CREA ESTA HOJA EN DRIVE!
+NOMBRE_SHEET_DB = "Usuarios_AutoApp" # ¡Asegúrate de crear esta hoja en Drive!
 
 # --- IMPORTACIÓN CONDICIONAL DE MOVIEPY ---
 try:
@@ -71,7 +73,7 @@ def consumir_credito_invitado():
 # --- ESTILOS CSS (MODO EXPERIENCIA PERFECTA) ---
 st.markdown("""
     <style>
-    .main { background-color: #F1F5F9; } /* Fondo ligeramente diferente para diferenciar */
+    .main { background-color: #F1F5F9; } 
     h1 { color: #1E293B; font-family: 'Helvetica Neue', sans-serif; font-weight: 800; }
     
     .stButton>button {
@@ -85,7 +87,7 @@ st.markdown("""
 
     /* --- STATUS FLOTANTE --- */
     div[data-testid="stStatusWidget"] {
-        position: fixed !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; z-index: 999999 !important; background-color: white !important; padding: 25px !important; border-radius: 15px !important; box-shadow: 0 0 0 100vmax rgba(0,0,0,0.6) !important; border: 2px solid #EF4444 !important; /* Rojo para motor */ width: 85% !important; max-width: 350px !important; text-align: center !important;
+        position: fixed !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; z-index: 999999 !important; background-color: white !important; padding: 25px !important; border-radius: 15px !important; box-shadow: 0 0 0 100vmax rgba(0,0,0,0.6) !important; border: 2px solid #EF4444 !important; width: 85% !important; max-width: 350px !important; text-align: center !important;
     }
 
     /* --- ELIMINAR EFECTOS DE CARGA --- */
@@ -132,7 +134,7 @@ st.markdown("""
     .plan-basic { background-color: #F8FAFC; border: 2px solid #475569; color: #334155; }
     .plan-standard { background-color: white; border: 2px solid #EF4444; color: #0F172A; box-shadow: 0 4px 6px rgba(239, 68, 68, 0.1); }
     .plan-agency { background: linear-gradient(135deg, #FFFBEB 0%, #FFFFFF 100%); border: 2px solid #F59E0B; color: #0F172A; box-shadow: 0 10px 25px rgba(245, 158, 11, 0.25); transform: scale(1.03); position: relative; z-index: 10; }
-    /* Estilos generales */
+    
     .feature-list { list-style-type: none; padding: 0; margin: 15px 0; }
     .feature-list li { margin-bottom: 8px; font-size: 0.85em; display: flex; align-items: center; gap: 8px; line-height: 1.3; }
     .check-icon { color: #16a34a; font-weight: bold; min-width: 20px; font-size: 1.1em; } 
@@ -166,7 +168,7 @@ def limpiar_formulario():
     """RESETEA COMPLETAMENTE LOS CAMPOS DEL FORMULARIO AUTOMOTOR"""
     # Establecer valores por defecto
     st.session_state['v_oper'] = "Venta"
-    st.session_state['v_marca'] = "Toyota" # Valor por defecto
+    st.session_state['v_marca'] = "Toyota" 
     st.session_state['v_modelo'] = ""
     st.session_state['v_ano'] = 2020
     st.session_state['v_color'] = ""
@@ -177,6 +179,8 @@ def limpiar_formulario():
     st.session_state['v_combustible'] = "Nafta"
     st.session_state['v_precio'] = 0
     st.session_state['v_moneda'] = "Gs."
+    st.session_state['v_uso_alquiler'] = "Particular"
+    st.session_state['v_frecuencia_pago'] = "Diario"
     
     st.session_state['u_whatsapp'] = None 
     
@@ -233,19 +237,16 @@ def validar_imagenes_vehiculos(files):
                 "type": "image_url", 
                 "image_url": {
                     "url": f"data:image/jpeg;base64,{encode_image(Image.open(f))}",
-                    "detail": "low" # Low detail es más rápido y barato para validación
+                    "detail": "low"
                 }
             })
         
-        # Usamos un modelo rápido para esto
         res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": content}], temperature=0.0, max_tokens=10) 
         validation_result = res.choices[0].message.content.strip().upper()
         return validation_result == "VALID"
         
     except Exception as e:
         print(f"Error en validación: {e}")
-        # En caso de error de la API, dejamos pasar por defecto para no bloquear al usuario, 
-        # pero el prompt principal luego podría fallar.
         return True 
 
 # --- FUNCIÓN GENERADORA DE VIDEO REEL ---
@@ -339,12 +340,10 @@ def get_gspread_client():
 def obtener_usuarios_sheet():
     try:
         client_gs = get_gspread_client()
-        # IMPORTANTE: Usa el nuevo nombre de la hoja DB
         archivo = client_gs.open(NOMBRE_SHEET_DB)
         sheet = archivo.get_worksheet(0)
         return sheet.get_all_records()
-    except Exception as e:
-        # st.error(f"Error DB: {e}") # Descomentar para debug
+    except Exception:
         return []
 
 def descontar_credito(codigo_usuario):
@@ -431,7 +430,6 @@ if st.session_state.ver_planes:
         st.write("Planes diseñados para playas y agentes independientes.")
         c1, c2, c3 = st.columns(3)
         
-        # NOTA: Los textos de los planes se han adaptado ligeramente al contexto motor
         with c1:
             st.markdown("""<div class="plan-basic"><h3 class="plan-title-center">🥉 Básico</h3><div class="price-tag">20.000 Gs</div><ul class="feature-list"><li><span class="check-icon">✅</span> 10 Vehículos/mes</li><li><span class="check-icon">✅</span> Ficha Técnica Completa</li><li><span class="check-icon">✅</span> Datos de Precio</li><li><span class="check-icon">✅</span> Max 3 Fotos (Visión IA)</li><li class="feature-locked"><span class="cross-icon">❌</span> Estrategia de Venta</li><li class="feature-locked"><span class="cross-icon">❌</span> Tono de Voz</li><li class="feature-locked"><span class="cross-icon">❌</span> Link WhatsApp</li><li class="feature-locked"><span class="cross-icon">❌</span> Generador de Video</li></ul></div>""", unsafe_allow_html=True)
             st.button("Elegir Básico", key="btn_basico", on_click=seleccionar_plan, args=("Básico",))
@@ -606,7 +604,6 @@ st.divider()
 # =======================================================
 st.write("#### 2. 📝 Ficha Técnica")
 
-# Usamos keys para poder borrarlos luego en limpiar_formulario
 oper = st.radio("Operación", ["Venta", "Alquiler"], horizontal=True, key="v_oper")
 
 with st.form("formulario_vehiculo"):
@@ -617,7 +614,7 @@ with st.form("formulario_vehiculo"):
         tipo_vehiculo = st.selectbox("Tipo de Vehículo", ["Automóvil (Sedán/Hatch)", "Camioneta/Pickup", "SUV", "Furgoneta/Van", "Camión Ligero", "Deportivo"], key="v_tipo")
         estado = st.radio("Estado", ["Usado", "0KM"], horizontal=True, key="v_estado")
 
-        # Inputs de texto para mayor flexibilidad inicial
+        # Inputs de texto
         marca = st.text_input("Marca (Ej: Toyota, Kia)", key="v_marca")
         modelo = st.text_input("Modelo (Ej: Hilux, Picanto)", key="v_modelo")
         
@@ -630,17 +627,35 @@ with st.form("formulario_vehiculo"):
 
         origen = st.selectbox("Procedencia/Origen", ["Importado (Iquique/Vía Chile)", "Del Representante (Nacional)", "Importación Directa (USA/Europa)"], key="v_origen")
 
+        # --- OPCIONES DE ALQUILER ---
+        uso_alquiler = ""
+        if oper == "Alquiler":
+             st.markdown("ℹ️ **Opciones de Alquiler:**")
+             uso_alquiler = st.selectbox("Uso permitido", ["Particular", "Plataforma (Uber/Bolt/MUV)"], key="v_uso_alquiler")
+
     with c2:
         st.write("**Detalles Mecánicos & Precio:**")
         transmision = st.selectbox("Transmisión", ["Automática", "Manual/Mecánica"], key="v_transmision")
         combustible = st.selectbox("Combustible", ["Nafta", "Diesel", "Híbrido", "Eléctrico", "Flex"], key="v_combustible")
         
         st.write("💰 **Precio:**")
-        col_mon, col_prec = st.columns([1, 2])
-        with col_mon:
-             moneda = st.selectbox("Divisa", ["Gs.", "$us"], label_visibility="collapsed", key="v_moneda")
-        with col_prec:
-             precio_val = st.number_input("Monto", min_value=0, step=1000000, format="%d", label_visibility="collapsed", placeholder="Monto", key="v_precio")
+        
+        # Logica de precio diferenciada para alquiler
+        frecuencia_pago = ""
+        if oper == "Alquiler":
+             col_mon, col_prec, col_frec = st.columns([1, 2, 2])
+             with col_mon:
+                  moneda = st.selectbox("Divisa", ["Gs.", "$us"], label_visibility="collapsed", key="v_moneda")
+             with col_prec:
+                  precio_val = st.number_input("Monto", min_value=0, step=50000, format="%d", label_visibility="collapsed", placeholder="Monto", key="v_precio")
+             with col_frec:
+                  frecuencia_pago = st.selectbox("Frecuencia", ["Diario", "Semanal", "Mensual"], label_visibility="collapsed", key="v_frecuencia_pago")
+        else:
+             col_mon, col_prec = st.columns([1, 2])
+             with col_mon:
+                  moneda = st.selectbox("Divisa", ["Gs.", "$us"], label_visibility="collapsed", key="v_moneda")
+             with col_prec:
+                  precio_val = st.number_input("Monto", min_value=0, step=1000000, format="%d", label_visibility="collapsed", placeholder="Monto", key="v_precio")
 
         if es_pro or MODO_LANZAMIENTO:
             st.write("📱 **WhatsApp para contacto:**")
@@ -653,18 +668,17 @@ with st.form("formulario_vehiculo"):
         deshabilitar_boton = True
         st.warning("⚠️ **Sube las fotos del vehículo para activar la IA.**")
     
-    submitted = st.form_submit_button("✨ Generar Descripción de Venta", type="primary", disabled=deshabilitar_boton)
+    submitted = st.form_submit_button("✨ Generar Descripción de Venta/Alquiler", type="primary", disabled=deshabilitar_boton)
 
 # =======================================================
 # === GENERACIÓN (LÓGICA AUTOMOTOR) ===
 # =======================================================
 if submitted:
-    # Validaciones básicas del formulario
+    # Validaciones
     if not marca or not modelo or precio_val == 0:
         st.warning("⚠️ Completa Marca, Modelo y Precio (mayor a 0).")
         st.stop()
         
-    # Validación de Créditos
     permitido = False
     if es_pro and creditos_disponibles > 0: permitido = True
     elif not es_pro and st.session_state['guest_credits'] > 0: permitido = True
@@ -675,17 +689,16 @@ if submitted:
     if permitido:
         estado_ia = st.status("🕵️ Iniciando análisis del vehículo...", expanded=True)
         
-        # --- PASO 1: VALIDACIÓN DE IMAGENES (EL PORTERO) ---
+        # PASO 1: VALIDACIÓN (PORTERO)
         estado_ia.write("👁️ **Verificando que las fotos sean de vehículos...**")
         es_vehiculo_valido = validar_imagenes_vehiculos(uploaded_files)
         
         if not es_vehiculo_valido:
             estado_ia.update(label="❌ Error de validación", state="error", expanded=True)
-            st.error("Lo siento, no puedo generar la descripción ya que tus fotos no parecen estar dentro de la categoría de vehículos (autos, camionetas, etc.). Por favor, verifica las imágenes.")
-            # NO DESCONTAMOS CRÉDITO AQUÍ
+            st.error("Lo siento, no puedo generar la descripción ya que tus fotos no parecen estar dentro de la categoría de vehículos (autos, camionetas, etc.).")
             st.stop()
 
-        # --- PASO 2: GENERACIÓN DEL COPY ---
+        # PASO 2: GENERACIÓN
         try:
             estado_ia.write("✅ Fotos validadas.")
             estado_ia.write("🧠 **Analizando detalles (estado, equipamiento visible)...**")
@@ -694,16 +707,19 @@ if submitted:
 
             precio_fmt = format_price_display(precio_val)
             texto_precio_final = f"{precio_fmt} {moneda}"
-            if oper == "Alquiler": texto_precio_final += " (Consultar planes)"
+            
+            detalles_alquiler_prompt = ""
+            if oper == "Alquiler":
+                 if frecuencia_pago: texto_precio_final += f" ({frecuencia_pago})"
+                 detalles_alquiler_prompt = f". Uso permitido: {uso_alquiler}. Frecuencia de pago: {frecuencia_pago}."
 
-            # Definir el tono según el estado
-            tono_venta = "centrado en la confiabilidad, el estado impecable y la oportunidad."
-            if estado == "0KM":
-                 tono_venta = "centrado en la exclusividad, tecnología, garantía y la emoción de estrenar."
+            tono_venta = "centrado en la confiabilidad y estado."
+            if estado == "0KM": tono_venta = "centrado en la exclusividad y garantía."
+            if oper == "Alquiler" and "Plataforma" in uso_alquiler: tono_venta = "centrado en la economía y rentabilidad para trabajar."
 
             base_prompt = f"""Eres un Vendedor de Autos Experto y Copywriter Automotriz.
-            DATOS TÉCNICOS DEL VEHÍCULO:
-            - Operación: {oper}
+            DATOS TÉCNICOS:
+            - Operación: {oper}{detalles_alquiler_prompt}
             - Vehículo: {marca} {modelo} {year_val}.
             - Tipo: {tipo_vehiculo}. Color: {color_val}.
             - Estado: {estado}. Origen: {origen}.
@@ -715,66 +731,58 @@ if submitted:
             TUS INSTRUCCIONES MAESTRAS (OBLIGATORIO):
             
             1. 👁️ ANÁLISIS VISUAL DETALLADO:
-               - Mira las fotos y DETECTA: ¿Tiene llantas deportivas? ¿Tapizado de cuero? ¿Pantalla touch? ¿Techo solar? ¿Estado de las cubiertas? ¿Faros LED?
-               - Menciona estos detalles visuales en la descripción para darle valor.
+               - Mira las fotos y DETECTA: llantas, cuero, pantalla, estado general. Menciona lo que ves.
 
             2. 🎯 ESTRATEGIA DE VENTA AUTOMOTRIZ:
                - Tono: Persuasivo, directo y {tono_venta}.
-               - Si es 0KM, vende el sueño y la garantía. Si es Usado, vende el cuidado, el mantenimiento y la oportunidad de precio.
-               - Destaca la procedencia ({origen}) como un factor de calidad o precio según corresponda.
+               - Destaca la procedencia ({origen}).
             
             OUTPUT (Genera 3 opciones):
-            Opción 1: Venta Emocional (El sueño del auto propio/viaje).
-            Opción 2: Venta Racional (Datos duros, estado, economía, precio).
-            Opción 3: Formato Corto para Redes (Directo al grano para Instagram/Facebook).
+            Opción 1: Venta Emocional.
+            Opción 2: Venta Racional (Datos duros).
+            Opción 3: Formato Corto para Redes.
             
             REGLAS:
-            - Usa Markdown (**negritas** en modelos y beneficios clave).
-            - Link WhatsApp (Si se proveyó número): https://wa.me/595{str(whatsapp_num)}
-            - Incluye 10 hashtags relevantes a Paraguay (ej: #AutosPy, #VentaDeUsados, #{marca}Paraguay, #Camionetas).
+            - Usa Markdown (**negritas**).
+            - Link WhatsApp: https://wa.me/595{str(whatsapp_num)}
+            - Incluye 10 hashtags relevantes a Paraguay.
             - PRECIO: Muestra siempre "{texto_precio_final}".
             
             {base_prompt}
             """
 
-            # Preparar el contenido para la IA con las imágenes
             content = [{"type": "text", "text": prompt_avanzado}]
             if (es_pro or MODO_LANZAMIENTO) and uploaded_files:
                 for f in uploaded_files:
-                    f.seek(0) # Resetear el puntero del archivo al inicio
+                    f.seek(0)
                     content.append({
                         "type": "image_url", 
                         "image_url": {
                             "url": f"data:image/jpeg;base64,{encode_image(Image.open(f))}",
-                            "detail": "low" # Low es suficiente para análisis general
+                            "detail": "low"
                         }
                     })
 
-            # Llamada principal a la IA para generar el texto
             res = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": content}], temperature=0.7) 
             generated_text = res.choices[0].message.content
 
             cleaned_text = generated_text.replace("###", "🚗").replace("##", "✨").replace("# ", "🔥 ")
             
-            # --- LÓGICA VIDEO REEL (SIMPLIFICADA PARA MOTOR) ---
+            # --- VIDEO REEL ---
             frases_video = []
             if puede_video:
                 try:
-                    # Extraer frases cortas e impactantes del texto generado
                     lines = cleaned_text.split('\n')
                     for l in lines:
                         l = l.strip().replace("*", "").replace("🚗", "").replace("✨", "").replace("🔥", "")
                         if 10 < len(l) < 35 and not l.startswith("http"): phrases_video.append(l)
-                    
-                    # Si no encuentra buenas frases, usar defaults
                     if len(frases_video) < 3:
                         frases_video = [f"{marca} {modelo} {year_val}", f"Estado: {estado}", "¡Contactanos hoy!"]
-                    st.session_state['video_frases'] = frases_video[:5] # Usar las primeras 5
+                    st.session_state['video_frases'] = frases_video[:5]
                 except:
                     st.session_state['video_frases'] = [f"{marca} {modelo}", "Disponible", "Ver Precio"]
 
-            # --- CONSUMO DE CRÉDITOS ---
-            # Solo descontamos si todo salió bien hasta aquí
+            # --- CONSUMO CRÉDITOS ---
             if es_pro:
                 exito = descontar_credito(user['codigo'])
                 if exito: st.session_state['usuario_activo']['limite'] = creditos_disponibles - 1
@@ -786,7 +794,7 @@ if submitted:
             estado_ia.update(label="✅ ¡Descripción lista!", state="complete", expanded=False)
             time.sleep(0.5) 
             estado_ia.empty() 
-            st.rerun() # Recargar para mostrar resultados
+            st.rerun() 
             
         except Exception as e:
             st.error(f"Error en el proceso: {e}")
@@ -800,12 +808,12 @@ if 'generated_result' in st.session_state:
     st.subheader("🎉 Estrategia de Venta Generada:")
     st.markdown(st.session_state['generated_result'])
     
-    # --- BOTONES SOCIALES ---
+    # BOTONES SOCIALES
     c_wa, c_ig, c_fb, c_tk = st.columns(4)
     msg_url = urllib.parse.quote(st.session_state['generated_result'])
-    # (SVGs de los botones se mantienen igual que en la versión inmobiliaria)
+    
     svg_wa = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 60.2 23.5 118.5 61.9 163.9L0 512l95.4-25.2c43.4 23.6 92.6 36.1 143.3 36.1 122.4 0 222-99.6 222-222 0-59.3-23.5-115.1-65.4-157zM223.9 471.1c-44.9 0-88.7-11.8-127.7-34.2L90.2 434l-47.6 12.6 12.7-46.4-6-10.5C25.1 346.6 12 296.4 12 244.1c0-116.9 95.1-212 211.9-212 56.6 0 109.8 22 149.9 62.1 40 40.1 62.1 93.3 62.1 149.9 0 116.9-95.1 212-212 212zm112.2-157.8c-6.1-3-36.4-18-42-20.1-5.6-2.1-9.7-3-13.7 3-4 6.1-15.6 19.5-19.1 23.5-3.5 4-7 4.5-13.1 1.5-6.1-3-25.7-9.5-48.9-30.2-18.1-16.1-30.3-36-33.8-42-3.5-6.1-.3-9.4 2.7-12.4 2.8-2.8 6.1-7.3 9.1-11 3-3.6 4-6.1 6.1-10.3 2.1-4.2 1-7.9-.5-11-1.5-3-13.7-33.1-18.8-45.3-5-12.1-10.1-10.4-13.7-10.6-3.5-.2-7.5-.2-11.5-.2-4 0-10.5 1.5-15.9 7.3-5.4 5.8-20.8 20.3-20.8 49.5 0 29.2 21 57.5 23.9 61.5 3 4 41.3 63.1 100.1 88.5 14 6 24.9 9.6 33.4 12.3 14.1 4.5 26.9 3.8 37.1 2.3 11.3-1.7 36.4-14.9 41.5-29.3 5.1-14.4 5.1-26.8 3.6-29.3-1.5-2.6-5.6-4-11.6-7z"/></svg>'
-    svg_ig = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.9 0-184.9zm-49.6 259.7c-12.2 12.2-28.4 18.4-59.5 20-32.3 1.6-128.9 1.6-161.2 0-31-1.6-47.3-7.8-59.5-20-12.2-12.2-18.4-28.4-20-59.5-1.6-32.3-1.6-128.9 0-161.2 1.6-31 7.8-47.3 20-59.5 12.2-12.2 28.4-18.4 59.5-20 32.3-1.6 128.9-1.6 161.2 0 31 1.6 47.3 7.8 59.5 20 12.2 12.2 18.4 28.4 20 59.5 1.6 32.3 1.6 128.9 0 161.2-1.6 31-7.8 47.3-20 59.5z"/></svg>'
+    svg_ig = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.9 0-184.9zm-49.6 259.7c-12.2 12.2-28.4 18.4-59.5 20-32.3 1.6-128.9 1.6-161.2 0-31-1.6-47.3-7.8-59.5-20-12.2-12.2-18.4-28.4-20-59.5-1.6-32.3-1.6-128.9 0-161.2 1.6-31 7.8-47.3 20-59.5 12.2-12.2 28.4-18.4 59.5-20 32.3-1.6 128.9-1.6 161.2 0 31 1.6 47.3 7.8 59.5z"/></svg>'
     svg_fb = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><path d="M80 299.3V512H196V299.3h86.5l18-97.8H196V166.9c0-28.3 7.9-47.5 48.4-47.5h51.7V35.7c-9-1.2-39.6-3.9-75.3-3.9-74.5 0-125.5 45.5-125.5 128.9v72.8H80z"/></svg>'
     svg_tk = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path d="M448,209.91a210.06,210.06,0,0,1-122.77-39.25V349.38A162.55,162.55,0,1,1,185,188.31V278.2a90.92,90.92,0,1,0,90.93,90.93V0H210.16V209.91A210.26,210.26,0,1,0,448,209.91Z"/></svg>'
 
@@ -815,7 +823,7 @@ if 'generated_result' in st.session_state:
     with c_tk: st.markdown(f'''<a href="https://tiktok.com" target="_blank" class="social-btn btn-tk">{svg_tk} TikTok</a>''', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- ZONA VIDEO REEL ---
+    # VIDEO
     if puede_video and uploaded_files:
         st.markdown("<br>", unsafe_allow_html=True)
         st.info("🎬 **Video Reel Automotriz**")
@@ -824,9 +832,9 @@ if 'generated_result' in st.session_state:
         if 'video_path' not in st.session_state:
             if st.button("🎥 GENERAR VIDEO AHORA"):
                 if not MOVIEPY_AVAILABLE:
-                    st.error("⚠️ Librería de video no disponible en este entorno.")
+                    st.error("⚠️ Librería de video no disponible.")
                 else:
-                    st_video = st.status("🎞️ Renderizando video del vehículo...", expanded=True)
+                    st_video = st.status("🎞️ Renderizando video...", expanded=True)
                     try:
                         frases = st.session_state.get('video_frases', [NOMBRE_APP])
                         path_video = crear_reel_vertical(uploaded_files, frases, st_video)
@@ -837,7 +845,7 @@ if 'generated_result' in st.session_state:
                             st_video.empty()
                             st.rerun()
                         else:
-                            st.warning("⚠️ No se pudo generar el video. Intenta con menos fotos.")
+                            st.warning("⚠️ Error al generar video.")
                     except Exception as e:
                         st.error(f"Error video: {e}")
         
